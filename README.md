@@ -20,3 +20,5 @@ This script is about exporting email group preference using Eloqua odata (Report
 ```console
 python script_2.py
 ```
+
+
