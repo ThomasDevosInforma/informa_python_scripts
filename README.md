@@ -21,4 +21,11 @@ This script is about exporting email group preference using Eloqua odata (Report
 python script_2.py
 ```
 
+## scrip_3.py
+This script is about deploying (create/update) functional use cases segments across all parent segment based on the segments created in `Unified Informa Parent Segment`
+
+**To run the script, use the below command line:**
+```console
+python script_3.py
+
 
