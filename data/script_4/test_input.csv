@@ -1,0 +1,2 @@
+﻿signal_table,signal_field,signal_sql,source_system,source_database,source_table,source_field,source_sql
+behavior_preference,preference_target,"select preference_target, preference_toggle, count(*) as total_rows from behavior_preference where source_system = <source_system> group by preference_target, preference_toggle",eloqua,,,,

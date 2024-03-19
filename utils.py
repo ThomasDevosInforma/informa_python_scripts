@@ -81,3 +81,9 @@ def write_dataframe_to_csv(df, file_path):
         os.makedirs('data')
     
     df.to_csv(file_path, index=False)
+
+def read_data_from_csv(df, file_path):
+    if not os.path.exists('data'):
+        os.makedirs('data')
+    
+    df.to_csv(file_path, index=False)

@@ -27,5 +27,22 @@ This script is about deploying (create/update) functional use cases segments acr
 **To run the script, use the below command line:**
 ```console
 python script_3.py
+```
+
+## scrip_4.py
+This script is about run end to end test between IIRIS segment source  layer and IIRIS segment Audience Studio
+
+**To run the script, use the below command line:**
+```console
+python script_4.py
+```
+
+## scrip_5.py
+This script is about exporting email html and plain text content using Eloqua REST API
+
+**To run the script, use the below command line:**
+```console
+python script_5.py
+```
 
 

@@ -135,7 +135,7 @@ def main(args):
                 print("ELOQUA | ITEMS RETURNED IN LIST: ", len(items))
 
                 # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
-                utils.write_dataframe_to_csv(pd.DataFrame.from_dict(items), 'data/campaignEmailActivities.csv')
+                utils.write_dataframe_to_csv(pd.DataFrame.from_dict(items), 'data/script_1/campaignEmailActivities.csv')
                 break
         print('ELOQUA | ENV NAME: ' + final_env['name'] + ' | END...')
     
