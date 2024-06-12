@@ -4,6 +4,7 @@ import math
 import os
 import pandas as pd
 import requests as rt
+import pytd.pandas_td as td
 
 import utils
 
@@ -100,7 +101,8 @@ def main(args):
         TD_API_BASE_URL = f'https://api-cdp.eu01.treasuredata.com'
         
         # Initialize an empty list to store all parent segments
-        rows = []        
+        rows = []
+        single = []        
         
         API_URL_PATH = "/audiences"
         print("TREASURE DATA | HTTP Request: " + API_URL_PATH)
@@ -119,9 +121,31 @@ def main(args):
                         'matrixColumnName': field['matrixColumnName']
                     }
                     rows.append(row)
-        
+
         # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
-        utils.write_dataframe_to_csv(pd.DataFrame.from_dict(rows), 'data/script_4/behaviors.csv')
+        #utils.write_dataframe_to_csv(pd.DataFrame.from_dict(rows), 'data/script_4/behaviors.csv')
+        
+        
+        for row in rows:
+          if row["name"] == 'Licensing' or row["name"] == 'dummy_master_segment_for_U101_workflow_20240225':
+              single.append(row)
+        
+        df = pd.DataFrame.from_dict(single)
+
+        # Group by the specified columns and aggregate 'matrixColumnName' into a list
+        grouped = df.groupby(['id', 'name', 'matrixDatabaseName', 'matrixTableName'])['matrixColumnName'].apply(list).reset_index()
+
+        
+        con = td.connect(apikey=API_KEY, endpoint="https://console-next.eu01.treasuredata.com/")
+        engine = td.create_engine("presto:cdp_audience_237331", con=con)
+
+        query='SELECT * FROM behavior_opportunity LIMIT 100'
+        data = td.read_td_query(query, engine, index_col=None, parse_dates=None, distributed_join=False,  params=None)
+
+        print(data)
+
+        
+        utils.write_dataframe_to_csv(pd.DataFrame.from_dict(data), 'data/script_4/testing.csv')
 
         print('TREASURE DATA | ENV NAME: ' + final_env['name'] + ' | END...')
         

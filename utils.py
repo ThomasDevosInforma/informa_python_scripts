@@ -87,3 +87,7 @@ def read_data_from_csv(df, file_path):
         os.makedirs('data')
     
     df.to_csv(file_path, index=False)
+
+# Custom function to calculate the range (max - min)
+def calc_range(x):
+    return ((x < -1).count() / x.count()) * 100
