@@ -6,7 +6,7 @@ Navigate to the local folder called "virtual_environment" and run the below comm
 .\informa\Scripts\activate
 ```
 ## scrip_1.py
-This script is about exporting aggregated Eloqua email activities using Eloqua odata (Reporting) API.
+This script is about exporting aggregated Eloqua email activities using Eloqua odata (Reporting) API, extract data from Treasure data, compare both datasets and generate a report that can be used by business.
 
 **To run the script, use the below command line:**
 ```console
@@ -45,4 +45,11 @@ This script is about exporting email html and plain text content using Eloqua RE
 python script_5.py
 ```
 
+## scrip_6.py
+This script is about exporting aggregated Eloqua email group preferences using Eloqua odata (Reporting) API, extract data from Treasure data, compare both datasets and generate a report that can be used by business.
+
+**To run the script, use the below command line:**
+```console
+python script_6.py
+```
 

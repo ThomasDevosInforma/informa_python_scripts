@@ -1,10 +1,10 @@
 from dotenv import load_dotenv
 import sys
+import time
 import math
 import os
-import json
+import numpy as np
 import pandas as pd
-import requests as rt
 import pytd.pandas_td as td
 
 import utils
@@ -23,15 +23,34 @@ def main(args):
     """
 
     print("Arguments passed to the script:", args)
+    # Start the timer
+    start_time = time.time()
+
     print("START SCRIPT...")
-   
+    
+    print('---------------------------------------------------------------------------------------------------')
+    print('READ INPUT FILE')
+    input_df = pd.read_csv('data/script_1/input.csv')
+    input_df['source_system_env'] = input_df['source_system_env'].str.lower()
+    input_df['source_system_instance'] = input_df['source_system_instance'].str.lower()
+
+    filtered_input_df = input_df[input_df['run'] == 'yes']
+    filtered_input_df.reset_index(drop=True, inplace=True)
+
+    
+    
+    print('Input file row filtered: ', len(filtered_input_df))
+    
+    print('---------------------------------------------------------------------------------------------------')
+    print('SETUP VARIABLES')
+
     POSTMAN_API_BASE_URL = f'https://api.getpostman.com'
     
     POSTMAN_AUTHORIZATION = {
     'key': 'X-Api-Key',
     'value': os.getenv('POSTMAN_API_KEY')
     }
-
+    
     print('---------------------------------------------------------------------------------------------------')
     print('GET POSTMAN ELOQUA WORKSPACE')
     elq_envs = []
@@ -46,7 +65,7 @@ def main(args):
     elq_envs.extend(response.json().get('workspace', {}).get('environments', []))
 
     print('---------------------------------------------------------------------------------------------------')
-    print('GET EACH POSTMAN ENVIRONMENT IN ELOQUA WORKSPACE')
+    print('GET EACH POSTMAN ENVIRONMENT IN ELOQUA WORKSPACE AND FILTER ONLY RELEVANT ELOQUA POSTMAN ENVIRONMENTS')
     for elq_env in elq_envs:
         
         POSTMAN_API_URL_FULL_PATH = '/environments/' + elq_env['uid']
@@ -72,6 +91,10 @@ def main(args):
             if( value['key'] == 'env' ):
                 item['env'] = value['value']
             
+            # Add the instance name to the environment to allow filtering the relevant environment going forward
+            if( value['key'] == 'instance' ):
+                item['instance'] = value['value']
+            
             # Add the POD to the environment
             if( value['key'] == 'elq-Env-Pod' ):
                 item['pod'] = value['value']
@@ -79,22 +102,36 @@ def main(args):
             # Add the Base64 Encoding string to the environment
             if( value['key'] == 'elq-Env-BasicAuthEncoding' ):
                 item['api_key'] = value['value']
-
-
+        
         elq_envs_details.append(item)
-
-    print('---------------------------------------------------------------------------------------------------')
-    print('FILTER ONLY RELEVANT ELOQUA POSTMAN ENVIRONMENTS')
-    elq_final_envs = [elq_env_detail for elq_env_detail in elq_envs_details if 'env' in elq_env_detail and elq_env_detail['env'] == 'prd' and 'active' in elq_env_detail and elq_env_detail['active'] == 'true' ]
-    print('Eloqua environments filtered: ', len(elq_final_envs))
     
+    elq_envs_details_df = pd.DataFrame(elq_envs_details)
+    
+    print(' ')
+    print('FILTER ONLY RELEVANT ELOQUA POSTMAN ENVIRONMENTS')
+
+    elq_envs_details_df['active'] = elq_envs_details_df['active'].fillna(0).astype(bool)
+    elq_envs_details_df['env'] = elq_envs_details_df['env'].str.lower()
+    elq_envs_details_df['instance'] = elq_envs_details_df['instance'].str.lower()
+    elq_envs_details_df = elq_envs_details_df[(elq_envs_details_df['active'] == True)]
+
+
+    elq_envs_filtered_df = pd.merge(elq_envs_details_df, filtered_input_df, left_on=['env', 'instance'], right_on=['source_system_env', 'source_system_instance'])
+    elq_envs_filtered_df = elq_envs_filtered_df.drop(columns=['source_system_env', 'source_system_instance'])
+    print('Eloqua environments filtered: ', len(elq_envs_filtered_df))
+    
+    # Initialize an empty list to store all segments
+    activity_df = pd.DataFrame()
+        
     print('---------------------------------------------------------------------------------------------------')        
-    for elq_final_env in elq_final_envs:
-        print('ELOQUA | ENV NAME: ' + elq_final_env['name'] + ' | START...')
+    for index, row in elq_envs_filtered_df.iterrows():
+    
+        print('ELOQUA | INSTANCE NAME: ' + row['instance'] + ' | START...')
+        print('')
         
         # Declare API Variables
-        POD = elq_final_env['pod']
-        API_KEY = elq_final_env['api_key']
+        POD = row['pod']
+        API_KEY = row['api_key']
         
         ELOQUA_AUTHORIZATION = {
             'key': 'Authorization',
@@ -104,13 +141,10 @@ def main(args):
         ELOQUA_API_BASE_URL = f'https://secure.{POD}.eloqua.com'
 
         # GET Email Activity Data
-        print('------')
         print('GET CAMPAIGN_ANALYSIS | EMAIL_ACTIVITIES FROM ELOQUA REPORTING API ')
+        activity_items = []
 
         API_URL_PATH_ACTIVITY = "/api/odata/campaignAnalysis/1/emailActivities"
-
-        # Initialize an empty list to store all segments
-        activity_items = []
         
         # Initailise variable for the loop
         page_number = 0
@@ -135,6 +169,7 @@ def main(args):
                 skip = skip + top
 
             else:
+                print(' ')
                 print("ELOQUA | ITEMS RETURNED BY API: ", count)
                 print("ELOQUA | ITEMS RETURNED IN LIST: ", len(activity_items))
                 break        
@@ -142,33 +177,38 @@ def main(args):
         print('------')
         print('TRANSFORM DATA | CLEAN & JOIN TABLES USING PANDAS')
 
-
         # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
-        activity_df = pd.json_normalize(activity_items,max_level=1)
-        activity_df = activity_df.rename(columns={'emailAsset.emailGroup': 'emailGroup', 'emailAsset.emailGroupID': 'emailGroupID', 'campaign.campaignName': 'CampaignName', 'emailAsset.emailName': 'emailName'})
+        df = pd.json_normalize(activity_items,max_level=1)
+        df = df.rename(columns={'emailAsset.emailGroup': 'emailGroup', 'emailAsset.emailGroupID': 'emailGroupID', 'campaign.campaignName': 'CampaignName', 'emailAsset.emailName': 'emailName'})
 
-        activity_df['instance'] = elq_final_env['name']
+        df['instance'] = row['instance']
 
         # convert the date string into UTC datetime and calculate relative days.
         today = pd.Timestamp.now(tz='UTC').normalize()
-        activity_df['dateTime'] = pd.to_datetime(activity_df['dateHour'])
-        activity_df['dateUtc'] = activity_df['dateTime'].apply(lambda x: x.tz_convert('UTC')).dt.normalize()
-        activity_df['relative_days'] = (activity_df['dateUtc'] - today).dt.days
+        df['dateUtc'] = pd.to_datetime(df['dateHour'], utc=True).dt.normalize()
 
-        # Filter out data that is more than 2 years using daily rolling
-        filtered_activity_df = activity_df[activity_df['relative_days'] >= -730]
-        filtered_activity_df = filtered_activity_df[['instance', 'emailGroup', 'CampaignName', 'emailName', 'totalSends', 'totalOpens', 'totalClickthroughs']]
+        #df['dateTime'] = pd.to_datetime(df['dateHour'])
+        #df['dateUtcold'] = df['dateTime'].apply(lambda x: x.tz_convert('UTC')).dt.normalize()
+
+        df['relative_days'] = (df['dateUtc'] - today).dt.days
         
-        activity_group_df = filtered_activity_df.groupby(['instance', 'emailGroup', 'CampaignName', 'emailName']).sum().reset_index()
+        # Filter out data that is more than 2 years using daily rolling
+        num_int  = int(row['retention_days'])
+        negative_int = - num_int
 
+        filtered_df = df[df['relative_days'] >= negative_int]
+        filtered_df = filtered_df[['instance', 'emailGroup', 'CampaignName', 'emailName', 'totalSends', 'totalOpens', 'totalClickthroughs']]
+        
+        group_df = filtered_df.groupby(['instance', 'emailGroup', 'CampaignName', 'emailName']).sum().reset_index()
+        activity_df = pd.concat([activity_df, group_df], ignore_index=True)
+
+        print('ELOQUA | INSTANCE NAME: ' + row['instance'] + ' | END...')
         print('------')
-        print('SAVE DATA | WRITE DATA TO CSV FILE')
-        utils.write_dataframe_to_csv(activity_df, 'data/script_1/campaignEmailActivities.csv')
-        utils.write_dataframe_to_csv(activity_group_df, 'data/script_1/campaignEmailActivities_elq.csv')
-
-        print('ELOQUA | ENV NAME: ' + elq_final_env['name'] + ' | END...')
-
     
+    print('---------------------------------------------------------------------------------------------------')    
+    print('SAVE DATA | WRITE DATA TO CSV FILE')
+    utils.write_dataframe_to_csv(activity_df, 'data/script_1/campaignEmailActivities_elq.csv')
+
     print('---------------------------------------------------------------------------------------------------')
     print('GET POSTMAN TREASURE DATA WORKSPACE')
 
@@ -266,7 +306,7 @@ def main(args):
             print(f"TREASURE DATA | PARENT SEGMENT NAME: {item['name']}")
             engine = td.create_engine(f"presto:{item['matrixDatabaseName']}", con=con)
 
-            query=f"SELECT activity_type, asset_name, campaign_name, COUNT(email) as email FROM {item['matrixTableName']} WHERE source_system = 'Eloqua' GROUP BY activity_type, asset_name, campaign_name"
+            query=f"SELECT activity_type, asset_name, campaign_name, COUNT(email) as email FROM {item['matrixTableName']} WHERE source_system = 'Eloqua' AND timestamp between to_unixtime(date_add('day', -90, date_trunc('day', from_unixtime(to_unixtime(current_timestamp), 'UTC')))) and (to_unixtime(date_trunc('day', from_unixtime(to_unixtime(current_timestamp), 'UTC'))) - 1) GROUP BY activity_type, asset_name, campaign_name"
             data = td.read_td_query(query, engine, index_col=None, parse_dates=None, distributed_join=False,  params=None)
             data['parent_segment'] = item['name']
             
@@ -301,27 +341,54 @@ def main(args):
         print('---------------------------------------------------------------------------------------------------')
         print('COMPARE DATA FROM ELOQUA AND TD PARENT SEGMENT')
                 
-        merged_df = pd.merge(activity_group_df, td_data, on=['emailName', 'CampaignName'], how='left')
+        merged_df = pd.merge(activity_df, td_data, on=['emailName', 'CampaignName'], how='left')
         merged_df = merged_df.rename(columns={'totalSends_x': 'totalSends_elq', 'totalOpens_x': 'totalOpens_elq', 'totalClickthroughs_x': 'totalClickthroughs_elq', 'totalSends_y': 'totalSends_td', 'totalOpens_y': 'totalOpens_td', 'totalClickthroughs_y': 'totalClickthroughs_td'})
         
         # Use fillna with 0
         merged_df = merged_df.fillna(0)
 
-        # Create calculated columns
-        merged_df['totalSendsDifference'] = ((merged_df['totalSends_td'] - merged_df['totalSends_elq']) / merged_df['totalSends_elq']) * 100
-        merged_df['totalOpensDifference'] = ((merged_df['totalOpens_td'] - merged_df['totalOpens_elq']) / merged_df['totalOpens_elq']) * 100
-        merged_df['totalClickthroughsDifference'] = ((merged_df['totalClickthroughs_td'] - merged_df['totalClickthroughs_elq']) / merged_df['totalClickthroughs_elq']) * 100
-        
+        # Create calculated columns & fill infinite (inf) and NaN values with 0
+        merged_df['totalSendsDifference'] = ((merged_df['totalSends_elq'] - merged_df['totalSends_td']) / merged_df['totalSends_elq']) * 100
+        merged_df['totalSendsDifference'] = np.where(np.isinf(merged_df['totalSendsDifference']) | np.isnan(merged_df['totalSendsDifference']), 0, merged_df['totalSendsDifference'])
+        merged_df['totalSendsDifference'] = merged_df['totalSendsDifference'].round(2)
+
+        merged_df['totalOpensDifference'] = ((merged_df['totalOpens_elq'] - merged_df['totalOpens_td']) / merged_df['totalOpens_elq']) * 100
+        merged_df['totalOpensDifference'] = np.where(np.isinf(merged_df['totalOpensDifference']) | np.isnan(merged_df['totalOpensDifference']), 0, merged_df['totalOpensDifference'])
+        merged_df['totalOpensDifference'] = merged_df['totalOpensDifference'].round(2)
+
+        merged_df['totalClickthroughsDifference'] = ((merged_df['totalClickthroughs_elq'] - merged_df['totalClickthroughs_td']) / merged_df['totalClickthroughs_elq']) * 100
+        merged_df['totalClickthroughsDifference'] = np.where(np.isinf(merged_df['totalClickthroughsDifference']) | np.isnan(merged_df['totalClickthroughsDifference']), 0, merged_df['totalClickthroughsDifference'])
+        merged_df['totalClickthroughsDifference'] = merged_df['totalClickthroughsDifference'].round(2)
+
+        print(merged_df.info())
+
         # Reorder columns
         merged_df = merged_df[['instance','emailGroup', 'CampaignName', 'emailName', 'totalSends_elq', 'totalSends_td', 'totalSendsDifference', 'totalOpens_elq', 'totalOpens_td','totalOpensDifference', 'totalClickthroughs_elq', 'totalClickthroughs_td', 'totalClickthroughsDifference']]
         
-        #merged_group_df = merged_df.groupby(['instance', 'emailGroup'])[['totalSendsDifference', 'totalOpensDifference', 'totalClickthroughsDifference']].mean().res
+        # Aggregate each difference columns based on Email Group name
+        merged_group_df = merged_df.groupby(['instance', 'emailGroup']).agg({'totalSendsDifference': ["count", utils.calc_range], 'totalOpensDifference': ["count", utils.calc_range], 'totalClickthroughsDifference': ["count", utils.calc_range]}).reset_index()
+        merged_group_df.columns = ['instance', 'emailGroup', 'send_total_rows', 'send_less_than_rows', 'open_total_rows', 'open_less_than_rows', 'click_total_rows', 'click_less_than_rows']
 
-        merged_group_df = merged_df.groupby(['instance', 'emailGroup']).agg({'totalSendsDifference': ['mean', utils.calc_range], 'totalOpensDifference': ['mean', utils.calc_range], 'totalClickthroughsDifference': ['mean', utils.calc_range]}).reset_index()
+        merged_group_df['send_ratio'] = merged_group_df['send_less_than_rows'] / merged_group_df['send_total_rows'] * 100
+        merged_group_df['send_ratio'] = np.where(np.isinf(merged_group_df['send_ratio']) | np.isnan(merged_group_df['send_ratio']), 0, merged_group_df['send_ratio'])
+        merged_group_df['send_ratio'] = merged_group_df['send_ratio'].round(0).astype(int)
 
-        merged_group_df.columns = ['instance', 'emailGroup','diff_send_avg', 'diff_send_max', 'diff_open_avg', 'diff_open_max', 'diff_click_avg', 'diff_click_max']
+        merged_group_df['open_ratio'] = merged_group_df['open_less_than_rows'] / merged_group_df['open_total_rows'] * 100
+        merged_group_df['open_ratio'] = np.where(np.isinf(merged_group_df['open_ratio']) | np.isnan(merged_group_df['open_ratio']), 0, merged_group_df['open_ratio'])
+        merged_group_df['open_ratio'] = merged_group_df['open_ratio'].round(0).astype(int)
 
+        merged_group_df['click_ratio'] = merged_group_df['click_less_than_rows'] / merged_group_df['click_total_rows'] * 100
+        merged_group_df['click_ratio'] = np.where(np.isinf(merged_group_df['click_ratio']) | np.isnan(merged_group_df['click_ratio']), 0, merged_group_df['click_ratio'])
+        merged_group_df['click_ratio'] = merged_group_df['click_ratio'].round(0).astype(int)
+
+        level2_threshold = 10
+        merged_group_df['status'] = (merged_group_df['send_ratio'] <= level2_threshold) & (merged_group_df['open_ratio'] <= level2_threshold) & (merged_group_df['click_ratio'] <= level2_threshold)
         
+        merged_group_df[['send_ratio', 'open_ratio', 'click_ratio']] = merged_group_df[['send_ratio', 'open_ratio', 'click_ratio']].astype(str) + '%'
+        merged_group_df = merged_group_df.rename(columns={'send_total_rows': 'total_rows_per_emailgroup'})
+
+        merged_group_df = merged_group_df[['instance', 'emailGroup','total_rows_per_emailgroup','send_ratio', 'open_ratio', 'click_ratio', 'status']]
+
         print('------')
         print('SAVE DATA | WRITE DATA TO CSV FILE')
         utils.write_dataframe_to_csv(pd.DataFrame.from_dict(merged_df), 'data/script_1/result.csv')
@@ -329,8 +396,23 @@ def main(args):
 
         # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
         #utils.write_dataframe_to_csv(pd.DataFrame.from_dict(rows), 'data/script_1/behaviors.csv')
-      
+        
+    
     print("END SCRIPT...")
+    
+    # End the timer
+    end_time = time.time()
+    
+    # Calculate elapsed time
+    elapsed_time = end_time - start_time
+    
+    # Convert elapsed time to hours, minutes, and seconds
+    hours = int(elapsed_time // 3600)
+    minutes = int((elapsed_time % 3600) // 60)
+    seconds = elapsed_time % 60
+
+    print(f"Elapsed time: {hours} hours, {minutes} minutes, {seconds:.2f} seconds")
+
 
 if __name__ == "__main__":
     # sys.argv contains the command-line arguments passed to the script, 

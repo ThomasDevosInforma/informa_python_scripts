@@ -2,9 +2,8 @@ from dotenv import load_dotenv
 import sys
 import math
 import os
-import json
+import numpy as np
 import pandas as pd
-import requests as rt
 import pytd.pandas_td as td
 
 import utils
@@ -32,7 +31,6 @@ def main(args):
     'value': os.getenv('POSTMAN_API_KEY')
     }
 
-    
     print('---------------------------------------------------------------------------------------------------')
     print('GET POSTMAN ELOQUA WORKSPACE')
     elq_envs = []
@@ -88,6 +86,9 @@ def main(args):
     print('FILTER ONLY RELEVANT ELOQUA POSTMAN ENVIRONMENTS')
     elq_final_envs = [elq_env_detail for elq_env_detail in elq_envs_details if 'env' in elq_env_detail and elq_env_detail['env'] == 'prd' and 'active' in elq_env_detail and elq_env_detail['active'] == 'true' ]
     print('Eloqua environments filtered: ', len(elq_final_envs))
+
+    # Initialize an empty list to store all segments
+    activity_items = []
     
     print('---------------------------------------------------------------------------------------------------')        
     for elq_final_env in elq_final_envs:
@@ -109,9 +110,6 @@ def main(args):
         print('GET CAMPAIGN_ANALYSIS | EMAIL_ACTIVITIES FROM ELOQUA REPORTING API ')
 
         API_URL_PATH_ACTIVITY = "/api/odata/campaignAnalysis/1/emailActivities"
-
-        # Initialize an empty list to store all segments
-        activity_items = []
         
         # Initailise variable for the loop
         page_number = 0
@@ -139,80 +137,7 @@ def main(args):
                 print("ELOQUA | ITEMS RETURNED BY API: ", count)
                 print("ELOQUA | ITEMS RETURNED IN LIST: ", len(activity_items))
                 break        
-        
-        # GET Email Assets
-        '''
-        print('------')
-        print('GET ASSETS | EMAIL_ASSETS FROM ELOQUA REST API ')
-
-        API_URL_PATH_EMAIL = "/api/REST/2.0/assets/emails"
-
-        # Initialize an empty list to store all segments
-        email_items = []
-        
-        # Initailise variable for the loop
-        page_number = 1
-        count = 500
-        order_by = "id"
-
-        while True:
-            API_URL_PARAMS_EMAIL = f'?count={count}&page={page_number}&orderBy={order_by}'
-            API_URL_FULL_PATH_EMAIL = API_URL_PATH_EMAIL + API_URL_PARAMS_EMAIL
-            print("ELOQUA | HTTP Request: " + API_URL_FULL_PATH_EMAIL)
-
-            # Call reusable function which will get full list ofContact fields in Eloqua
-            response = utils.get_list_of_items(ELOQUA_AUTHORIZATION, ELOQUA_API_BASE_URL, API_URL_FULL_PATH_EMAIL)
-            email_items.extend(response.json().get('elements', []))
-
-            total = response.json().get('total', 0)
-            page_size = response.json().get('pageSize', 0)
-            
-            number_loops = math.ceil(total / page_size)
-            
-            if page_number < number_loops :
-                page_number = page_number + 1
-
-            else:
-                print("ELOQUA | ITEMS RETURNED BY API: ", total)
-                print("ELOQUA | ITEMS RETURNED IN LIST: ", len(email_items))
-                break
-
-        # GET Campaign Assets
-        print('------')
-        print('GET ASSETS | CAMPAIGN_ASSETS FROM ELOQUA REST API ')
-
-        API_URL_PATH_CAMPAIGN = "/api/REST/2.0/assets/campaigns"
-
-        # Initialize an empty list to store all segments
-        campaign_items = []
-        
-        # Initailise variable for the loop
-        page_number = 1
-        count = 500
-        order_by = "id"
-
-        while True:
-            API_URL_PARAMS_CAMPAIGN = f'?count={count}&page={page_number}&orderBy={order_by}'
-            API_URL_FULL_PATH_CAMPAIGN = API_URL_PATH_CAMPAIGN + API_URL_PARAMS_CAMPAIGN
-            print("ELOQUA | HTTP Request: " + API_URL_FULL_PATH_CAMPAIGN)
-
-            # Call reusable function which will get full list ofContact fields in Eloqua
-            response = utils.get_list_of_items(ELOQUA_AUTHORIZATION, ELOQUA_API_BASE_URL, API_URL_FULL_PATH_CAMPAIGN)
-            campaign_items.extend(response.json().get('elements', []))
-            
-            total = response.json().get('total', 0)
-            page_size = response.json().get('pageSize', 0)
-            
-            number_loops = math.ceil(total / page_size)
-            
-            if page_number < number_loops :
-                page_number = page_number + 1
-
-            else:
-                print("ELOQUA | ITEMS RETURNED BY API: ", total)
-                print("ELOQUA | ITEMS RETURNED IN LIST: ", len(campaign_items))
-                break
-        '''
+    
         print('------')
         print('TRANSFORM DATA | CLEAN & JOIN TABLES USING PANDAS')
 
@@ -220,58 +145,26 @@ def main(args):
         # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
         activity_df = pd.json_normalize(activity_items,max_level=1)
         activity_df = activity_df.rename(columns={'emailAsset.emailGroup': 'emailGroup', 'emailAsset.emailGroupID': 'emailGroupID', 'campaign.campaignName': 'CampaignName', 'emailAsset.emailName': 'emailName'})
+
         activity_df['instance'] = elq_final_env['name']
-        activity_df = activity_df[['instance', 'dateHour', 'emailGroupID','emailGroup', 'eloquaCampaignId','CampaignName', 'emailId', 'emailName', 'totalSends', 'totalOpens', 'totalClickthroughs']]        
+
+        # convert the date string into UTC datetime and calculate relative days.
+        today = pd.Timestamp.now(tz='UTC').normalize()
+        activity_df['dateTime'] = pd.to_datetime(activity_df['dateHour'])
+        activity_df['dateUtc'] = activity_df['dateTime'].apply(lambda x: x.tz_convert('UTC')).dt.normalize()
+        activity_df['relative_days'] = (activity_df['dateUtc'] - today).dt.days
+
+        # Filter out data that is more than 2 years using daily rolling
+        filtered_activity_df = activity_df[activity_df['relative_days'] >= -730]
+        filtered_activity_df = filtered_activity_df[['instance', 'emailGroup', 'CampaignName', 'emailName', 'totalSends', 'totalOpens', 'totalClickthroughs']]
         
-        print(activity_df.info())
+        activity_group_df = filtered_activity_df.groupby(['instance', 'emailGroup', 'CampaignName', 'emailName']).sum().reset_index()
 
-        # Convert "dateHour" column to a datetime
-        #activity_df['datetime'] = pd.to_datetime(activity_df['dateHour'])
-
-        # Extract "emailName" attribute from "emailAsset" column and add it as a column to dataframe
-        #activity_df['emailAsset'] = activity_df['emailAsset'].astype(str)
-        #activity_df['emailName'] = activity_df['emailAsset'].apply(lambda x: json.loads(x)['emailName'])
-
-        '''
-        # Group by to get 1 row per email asset
-        #activity_group_df = activity_df[activity_df['eloquaCampaignId'] != -1].reset_index(drop=True)
-        #activity_group_df = activity_group_df[activity_group_df['emailId'] != -1].reset_index(drop=True)
-
-        activity_group_df = activity_df[['emailId', 'eloquaCampaignId', 'totalSends', 'totalOpens', 'totalClickthroughs']]
-        activity_group_df = activity_group_df.groupby(['emailId', 'eloquaCampaignId']).sum().reset_index()
-        activity_group_df['emailId'] = activity_group_df['emailId'].astype(str)
-        activity_group_df['eloquaCampaignId'] = activity_group_df['eloquaCampaignId'].astype(str)
-
-        print(activity_group_df)
-
-        # Convert items to dataframe and change the id column type to string
-        email_df = pd.DataFrame.from_dict(email_items)
-        email_df['id'] = email_df['id'].astype(str)
-        
-        # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
-        campaign_df = pd.DataFrame.from_dict(campaign_items)
-        campaign_df['id'] = campaign_df['id'].astype(str)
-
-        activity_email_df = pd.merge(activity_group_df, email_df, left_on='emailId', right_on='id', how='left')
-        elq_data = pd.merge(activity_email_df, campaign_df, left_on='eloquaCampaignId', right_on='id', how='left')
-        
-        elq_data = elq_data.rename(columns={'name_x': 'emailName', 'name_y': 'CampaignName', 'eloquaCampaignId': 'CampaignId'})
-        elq_data = elq_data[['CampaignName', 'emailName', 'totalSends', 'totalOpens', 'totalClickthroughs']]
-
-        elq_data['CampaignName'] = elq_data['CampaignName'].astype(str)
-        elq_data['emailName'] = elq_data['emailName'].astype(str)
-        elq_data['instance'] = elq_final_env['name']
-        '''
         print('------')
         print('SAVE DATA | WRITE DATA TO CSV FILE')
         utils.write_dataframe_to_csv(activity_df, 'data/script_1/campaignEmailActivities.csv')
-        
-        '''
-        utils.write_dataframe_to_csv(activity_group_df, 'data/script_1/campaignEmailActivities_agg.csv')
-        utils.write_dataframe_to_csv(email_df, 'data/script_1/email_assets.csv')
-        utils.write_dataframe_to_csv(campaign_df, 'data/script_1/campaign_assets.csv')
-        utils.write_dataframe_to_csv(elq_data, 'data/script_1/campaignEmailActivities_elq.csv')
-        '''
+        utils.write_dataframe_to_csv(activity_group_df, 'data/script_1/campaignEmailActivities_elq.csv')
+
         print('ELOQUA | ENV NAME: ' + elq_final_env['name'] + ' | END...')
 
     
@@ -311,23 +204,17 @@ def main(args):
             # Add the environment Type to the environment
             if( value['key'] == 'env' ):
                 item['env'] = value['value']
-            
-            # Add the tool to the environment
-            if( value['key'] == 'tool' ):
-                item['tool'] = value['value']
 
             # Add the Base64 Encoding string to the environment
             if( value['key'] == 'td-Env-BasicAuthEncoding' ):
                 item['api_key'] = value['value']
 
-
         td_envs_details.append(item)
     
     print('---------------------------------------------------------------------------------------------------')
     print('FILTER ONLY RELEVANT TREASURE DATA POSTMAN ENVIRONMENTS')
-    td_final_envs = [td_env_detail for td_env_detail in td_envs_details if 'env' in td_env_detail and 'tool' in td_env_detail and td_env_detail['env'] == 'prd' and td_env_detail['tool'] == 'td']
+    td_final_envs = [td_env_detail for td_env_detail in td_envs_details if 'env' in td_env_detail and td_env_detail['env'] == 'prd']
     print('Treasure Data environments filtered: ', len(td_final_envs))
-    
     
     print('---------------------------------------------------------------------------------------------------')        
     for td_final_env in td_final_envs:
@@ -403,6 +290,8 @@ def main(args):
         # Drop columns
         td_data = td_data.drop(columns=['Bounceback'])
 
+        print('------')
+        print('SAVE DATA | WRITE DATA TO CSV FILE')
         # Save data in the 
         utils.write_dataframe_to_csv(pd.DataFrame.from_dict(td_data), 'data/script_1/campaignEmailActivities_td.csv')
 
@@ -411,27 +300,34 @@ def main(args):
         print('---------------------------------------------------------------------------------------------------')
         print('COMPARE DATA FROM ELOQUA AND TD PARENT SEGMENT')
                 
-        #elq_data = pd.read_csv('data/script_1/campaignEmailActivities_elq.csv')
-        
-        #td_data = pd.read_csv('data/script_1/campaignEmailActivities_td.csv')
-        #td_data['CampaignName'] = td_data['CampaignName'].astype(str)
-        #td_data['emailName'] = td_data['emailName'].astype(str)
-
-        merged_df = pd.merge(activity_df, td_data, on=['emailName', 'CampaignName'], how='left')
+        merged_df = pd.merge(activity_group_df, td_data, on=['emailName', 'CampaignName'], how='left')
         merged_df = merged_df.rename(columns={'totalSends_x': 'totalSends_elq', 'totalOpens_x': 'totalOpens_elq', 'totalClickthroughs_x': 'totalClickthroughs_elq', 'totalSends_y': 'totalSends_td', 'totalOpens_y': 'totalOpens_td', 'totalClickthroughs_y': 'totalClickthroughs_td'})
         
         # Use fillna with 0
         merged_df = merged_df.fillna(0)
 
-        # Create calculated columns
+        # Create calculated columns & fill infinite (inf) and NaN values with 0
         merged_df['totalSendsDifference'] = ((merged_df['totalSends_td'] - merged_df['totalSends_elq']) / merged_df['totalSends_elq']) * 100
+        merged_df['totalSendsDifference'] = np.where(np.isinf(merged_df['totalSendsDifference']) | np.isnan(merged_df['totalSendsDifference']), 0, merged_df['totalSendsDifference'])
+        
+        
         merged_df['totalOpensDifference'] = ((merged_df['totalOpens_td'] - merged_df['totalOpens_elq']) / merged_df['totalOpens_elq']) * 100
+        merged_df['totalOpensDifference'] = np.where(np.isinf(merged_df['totalOpensDifference']) | np.isnan(merged_df['totalOpensDifference']), 0, merged_df['totalOpensDifference'])
+
         merged_df['totalClickthroughsDifference'] = ((merged_df['totalClickthroughs_td'] - merged_df['totalClickthroughs_elq']) / merged_df['totalClickthroughs_elq']) * 100
-        
+        merged_df['totalClickthroughsDifference'] = np.where(np.isinf(merged_df['totalClickthroughsDifference']) | np.isnan(merged_df['totalClickthroughsDifference']), 0, merged_df['totalClickthroughsDifference'])
+
         # Reorder columns
-        merged_df = merged_df[['instance', 'CampaignName', 'emailName', 'totalSends_elq', 'totalSends_td', 'totalSendsDifference', 'totalOpens_elq', 'totalOpens_td','totalOpensDifference', 'totalClickthroughs_elq', 'totalClickthroughs_td', 'totalClickthroughsDifference']]
+        merged_df = merged_df[['instance','emailGroup', 'CampaignName', 'emailName', 'totalSends_elq', 'totalSends_td', 'totalSendsDifference', 'totalOpens_elq', 'totalOpens_td','totalOpensDifference', 'totalClickthroughs_elq', 'totalClickthroughs_td', 'totalClickthroughsDifference']]
         
+        # Aggregate each difference columns based on Email Group name
+        merged_group_df = merged_df.groupby(['instance', 'emailGroup']).agg({'totalSendsDifference': ["count", utils.calc_range], 'totalOpensDifference': ["count", utils.calc_range], 'totalClickthroughsDifference': ["count", utils.calc_range]}).reset_index()
+        merged_group_df.columns = ['instance', 'emailGroup', 'send_total', 'send_diff', 'open_total', 'open_diff', 'click_total', 'click_diff']
+
+        print('------')
+        print('SAVE DATA | WRITE DATA TO CSV FILE')
         utils.write_dataframe_to_csv(pd.DataFrame.from_dict(merged_df), 'data/script_1/result.csv')
+        utils.write_dataframe_to_csv(pd.DataFrame.from_dict(merged_group_df), 'data/script_1/report.csv')
 
         # Convert items to dataframe, write the dataframe into a csv and store it in the "data folder"
         #utils.write_dataframe_to_csv(pd.DataFrame.from_dict(rows), 'data/script_1/behaviors.csv')
