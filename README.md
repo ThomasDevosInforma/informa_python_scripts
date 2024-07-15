@@ -53,3 +53,12 @@ This script is about exporting aggregated Eloqua email group preferences using E
 python script_6.py
 ```
 
+## scrip_7.py
+This script extracts all the signals that exist for a parent segment and then extracts all the sources from which data is extracted for a parent signal-segment combination.
+
+**To run the script, use the below command line:**
+```console
+python script_7.py development
+OR
+python script_7.py production
+```
