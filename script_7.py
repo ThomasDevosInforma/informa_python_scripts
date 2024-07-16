@@ -38,7 +38,7 @@ def main():
     print(f"Exécution en mode {args.mode}")
     
     # Ajoutez ici le reste de votre code qui utilise la clé API
-    input_df = pd.read_csv('data/script_7/input.csv')
+    input_df = pd.read_csv('data/script_7/input2.csv')
     input_df.reset_index(drop=True, inplace=True)
     
     print('Input file row filtered: ', len(input_df))
@@ -92,7 +92,7 @@ def main():
             try:
                 data = pd.DataFrame(td.read_td_query(query, engine, index_col=None, parse_dates=None, distributed_join=False,  params=None))
                 for i in range(len(data)):
-                    source_system_list.append(data['source_system'][i])
+                    source_system_list.append(data['source_system'][i].replace("Snowplow", "IIRIS Tracker").replace("CDS (Convention Data Services)","CDS"))
                 item['source_system'] = source_system_list
                 df = pd.DataFrame(item)
                 df_transposed = df.transpose()
