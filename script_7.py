@@ -38,7 +38,7 @@ def main():
     print(f"Exécution en mode {args.mode}")
     
     # Ajoutez ici le reste de votre code qui utilise la clé API
-    input_df = pd.read_csv('data/script_7/input2.csv')
+    input_df = pd.read_csv('data/script_7/input.csv')
     input_df.reset_index(drop=True, inplace=True)
     
     print('Input file row filtered: ', len(input_df))
